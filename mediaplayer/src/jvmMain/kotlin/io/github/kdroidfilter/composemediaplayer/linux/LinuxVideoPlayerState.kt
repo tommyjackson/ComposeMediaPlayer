@@ -71,6 +71,7 @@ class LinuxVideoPlayerState : VideoPlayerState {
     private var lastFrameUpdateTime: Long = 0
     private var seekInProgress = false
     private var targetSeekTime: Double? = null
+    private val playbackRequested = AtomicBoolean(false)
 
     // Frame rate from native layer
     private var captureFrameRate: Float = 0.0f
@@ -256,6 +257,7 @@ class LinuxVideoPlayerState : VideoPlayerState {
                     }
 
                     withContext(Dispatchers.Main) {
+                        playbackRequested.set(initializeplayerState == InitialPlayerState.PLAY)
                         hasMedia = true
                         isLoading = false
                         isPlaying = initializeplayerState == InitialPlayerState.PLAY
@@ -579,6 +581,7 @@ class LinuxVideoPlayerState : VideoPlayerState {
             seekToAsync(0f)
             onRestart?.invoke()
         } else {
+            playbackRequested.set(false)
             withContext(Dispatchers.Main) { isPlaying = false }
             pauseInBackground()
             onPlaybackEnded?.invoke()
@@ -588,6 +591,7 @@ class LinuxVideoPlayerState : VideoPlayerState {
     // --- Playback controls ---
 
     override fun play() {
+        playbackRequested.set(true)
         ioScope.launch {
             if (!hasMedia && lastUri != null) {
                 openUri(lastUri!!)
@@ -605,8 +609,13 @@ class LinuxVideoPlayerState : VideoPlayerState {
     private suspend fun playInBackground() {
         val ptr = playerPtr
         if (ptr == 0L) return
+        if (!playbackRequested.get()) return
         try {
             LinuxNativeBridge.nPlay(ptr)
+            if (!playbackRequested.get()) {
+                LinuxNativeBridge.nPause(ptr)
+                return
+            }
             withContext(Dispatchers.Main) { isPlaying = true }
             startFrameUpdates()
             startBufferingCheck()
@@ -618,6 +627,7 @@ class LinuxVideoPlayerState : VideoPlayerState {
     }
 
     override fun pause() {
+        playbackRequested.set(false)
         ioScope.launch { pauseInBackground() }
     }
 
@@ -625,6 +635,7 @@ class LinuxVideoPlayerState : VideoPlayerState {
         val ptr = playerPtr
         if (ptr == 0L) return
         try {
+            playbackRequested.set(false)
             LinuxNativeBridge.nPause(ptr)
             withContext(Dispatchers.Main) {
                 isPlaying = false
@@ -640,14 +651,39 @@ class LinuxVideoPlayerState : VideoPlayerState {
     }
 
     override fun stop() {
+        playbackRequested.set(false)
         ioScope.launch {
             pauseInBackground()
-            if (hasMedia) seekToAsync(0f)
-            withContext(Dispatchers.Main) {
-                hasMedia = false
-                isLoading = false
+            if (hasMedia) {
+                seekToStoppedFrame()
+            } else {
                 resetState()
             }
+        }
+    }
+
+    private suspend fun seekToStoppedFrame() {
+        val ptr = playerPtr
+        if (ptr == 0L) return
+
+        withContext(Dispatchers.Main) {
+            isPlaying = false
+            isLoading = true
+            sliderPos = 0f
+            _positionText.value = "00:00"
+        }
+
+        seekInProgress = true
+        targetSeekTime = 0.0
+        LinuxNativeBridge.nSeekTo(ptr, 0.0)
+        publishPausedFrameAfterSeek()
+        seekInProgress = false
+        targetSeekTime = null
+
+        withContext(Dispatchers.Main) {
+            isLoading = false
+            isPlaying = false
+            sliderPos = 0f
         }
     }
 
@@ -680,9 +716,10 @@ class LinuxVideoPlayerState : VideoPlayerState {
 
             val ptr = playerPtr
             if (ptr == 0L) return
+            val shouldResumeAfterSeek = playbackRequested.get()
             LinuxNativeBridge.nSeekTo(ptr, seekTime.toDouble())
 
-            if (isPlaying) {
+            if (shouldResumeAfterSeek) {
                 LinuxNativeBridge.nPlay(ptr)
                 delay(10)
                 updateFrameAsync()
@@ -695,8 +732,7 @@ class LinuxVideoPlayerState : VideoPlayerState {
                     }
                 }
             } else {
-                delay(50)
-                updateFrameAsync()
+                publishPausedFrameAfterSeek()
                 seekInProgress = false
                 targetSeekTime = null
                 withContext(Dispatchers.Main) { isLoading = false }
@@ -709,6 +745,13 @@ class LinuxVideoPlayerState : VideoPlayerState {
                 seekInProgress = false
                 targetSeekTime = null
             }
+        }
+    }
+
+    private suspend fun publishPausedFrameAfterSeek() {
+        repeat(6) {
+            delay(50)
+            updateFrameAsync()
         }
     }
 

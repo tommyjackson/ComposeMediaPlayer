@@ -1,6 +1,8 @@
 @file:OptIn(ExperimentalWasmDsl::class)
 
 import org.apache.tools.ant.taskdefs.condition.Os
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
 
@@ -155,6 +157,10 @@ android {
 }
 
 val nativeResourceDir = layout.projectDirectory.dir("src/jvmMain/resources/composemediaplayer/native")
+val nativeJdk =
+    extensions.getByType<JavaToolchainService>().launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(17))
+    }
 
 val buildNativeMacOs by tasks.registering(Exec::class) {
     description = "Compiles the Swift native library into macOS dylibs (arm64 + x64)"
@@ -172,6 +178,12 @@ val buildNativeMacOs by tasks.registering(Exec::class) {
     outputs.dir(nativeResourceDir)
     workingDir(nativeDir)
     commandLine("bash", "build.sh")
+    doFirst {
+        environment(
+            "JAVA_HOME",
+            nativeJdk.get().metadata.installationPath.asFile.absolutePath,
+        )
+    }
 }
 
 val buildNativeWindows by tasks.registering(Exec::class) {

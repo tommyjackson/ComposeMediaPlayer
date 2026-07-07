@@ -1,5 +1,3 @@
-rootProject.name = "Compose-Media-Player"
-
 pluginManagement {
     repositories {
         google {
@@ -13,6 +11,10 @@ pluginManagement {
         gradlePluginPortal()
         mavenCentral()
     }
+}
+
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
 dependencyResolutionManagement {
@@ -29,5 +31,8 @@ dependencyResolutionManagement {
         maven("https://s01.oss.sonatype.org/content/repositories/snapshots/")
     }
 }
+
+rootProject.name = "Compose-Media-Player"
+
 include(":mediaplayer")
 include(":sample:composeApp")

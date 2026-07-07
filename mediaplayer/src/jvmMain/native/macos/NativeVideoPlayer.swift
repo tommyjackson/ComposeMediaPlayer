@@ -925,15 +925,28 @@ class MacVideoPlayer {
     private func captureInitialFrame() {
         guard let output = videoOutput, player?.currentItem != nil, !isHLSStream else { return }
 
-        // Seek to the beginning to ensure we have a frame
         let zeroTime = CMTime.zero
-        player?.seek(to: zeroTime)
+        output.requestNotificationOfMediaDataChange(withAdvanceInterval: 0)
 
-        // Try to get the first frame
-        if output.hasNewPixelBuffer(forItemTime: zeroTime),
-           let pixelBuffer = output.copyPixelBuffer(forItemTime: zeroTime, itemTimeForDisplay: nil)
+        player?.seek(to: zeroTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            guard let self = self, finished else { return }
+            self.captureFrame(at: zeroTime)
+        }
+    }
+
+    private func captureFrame(at itemTime: CMTime, retries: Int = 2) {
+        guard let output = videoOutput else { return }
+
+        output.requestNotificationOfMediaDataChange(withAdvanceInterval: 0)
+
+        if output.hasNewPixelBuffer(forItemTime: itemTime),
+           let pixelBuffer = output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil)
         {
             retainLatestPixelBuffer(pixelBuffer)
+        } else if retries > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.captureFrame(at: itemTime, retries: retries - 1)
+            }
         }
     }
 
@@ -956,18 +969,13 @@ class MacVideoPlayer {
 
     /// Captures the latest frame from the video output if available.
     @objc private func captureFrame() {
-        guard let output = videoOutput,
+        guard videoOutput != nil,
               let item = player?.currentItem,
               isPlaying == true
         else { return }  // Skip capture if video is not playing
 
         let currentTime = item.currentTime()
-        if output.hasNewPixelBuffer(forItemTime: currentTime),
-           let pixelBuffer = output.copyPixelBuffer(
-               forItemTime: currentTime, itemTimeForDisplay: nil)
-        {
-            retainLatestPixelBuffer(pixelBuffer)
-        }
+        captureFrame(at: currentTime)
     }
 
 
@@ -1093,14 +1101,9 @@ class MacVideoPlayer {
         stopDisplayLink()
 
         // Capture the current frame to display while paused (not for HLS)
-        if !isHLSStream, let output = videoOutput, let item = player?.currentItem {
+        if !isHLSStream, videoOutput != nil, let item = player?.currentItem {
             let currentTime = item.currentTime()
-            if output.hasNewPixelBuffer(forItemTime: currentTime),
-               let pixelBuffer = output.copyPixelBuffer(
-                   forItemTime: currentTime, itemTimeForDisplay: nil)
-            {
-                retainLatestPixelBuffer(pixelBuffer)
-            }
+            captureFrame(at: currentTime)
         }
     }
 
@@ -1279,16 +1282,9 @@ class MacVideoPlayer {
             let tolerance = CMTime(seconds: 1.0, preferredTimescale: 600)
             player.seek(to: newTime, toleranceBefore: tolerance, toleranceAfter: tolerance)
         } else {
-            player.seek(to: newTime)
-
-            // Update frame at the new position if paused
-            if !isPlaying, let output = videoOutput {
-                if output.hasNewPixelBuffer(forItemTime: newTime),
-                   let pixelBuffer = output.copyPixelBuffer(
-                       forItemTime: newTime, itemTimeForDisplay: nil)
-                {
-                    retainLatestPixelBuffer(pixelBuffer)
-                }
+            player.seek(to: newTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+                guard let self = self, finished, !self.isPlaying else { return }
+                self.captureFrame(at: newTime)
             }
         }
     }

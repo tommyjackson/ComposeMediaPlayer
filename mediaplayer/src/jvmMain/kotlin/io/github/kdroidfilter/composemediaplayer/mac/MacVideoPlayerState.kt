@@ -68,6 +68,7 @@ class MacVideoPlayerState : VideoPlayerState {
     private var lastFrameUpdateTime: Long = 0
     private var seekInProgress = false
     private var targetSeekTime: Double? = null
+    private val playbackRequested = AtomicBoolean(false)
     private var videoFrameRate: Float = 0.0f
     private var screenRefreshRate: Float = 0.0f
     private var captureFrameRate: Float = 0.0f
@@ -300,6 +301,7 @@ class MacVideoPlayerState : VideoPlayerState {
                     }
 
                     // Update UI state on main thread
+                    playbackRequested.set(initializeplayerState == InitialPlayerState.PLAY)
                     withContext(Dispatchers.Main) {
                         hasMedia = true
                         isLoading = false
@@ -312,6 +314,10 @@ class MacVideoPlayerState : VideoPlayerState {
 
                     // First frame update in the background
                     updateFrameAsync()
+
+                    if (!isPlaying) {
+                        seedPausedFrameAtStart()
+                    }
 
                     // Start buffering check in the background
                     startBufferingCheck()
@@ -643,6 +649,21 @@ class MacVideoPlayerState : VideoPlayerState {
         }
     }
 
+    private suspend fun seedPausedFrameAtStart() {
+        val ptr = playerPtr
+        if (ptr == 0L) return
+
+        MacNativeBridge.nSeekTo(ptr, 0.0)
+        publishPausedFrameAfterSeek()
+    }
+
+    private suspend fun publishPausedFrameAfterSeek() {
+        repeat(6) {
+            delay(50)
+            updateFrameAsync()
+        }
+    }
+
     /**
      * Updates the playback position, slider, and audio levels on a background
      * thread.
@@ -705,6 +726,7 @@ class MacVideoPlayerState : VideoPlayerState {
             onRestart?.invoke()
         } else {
             macLogger.d { "checkLoopingAsync() - Video completed, updating state" }
+            playbackRequested.set(false)
             withContext(Dispatchers.Main) {
                 isPlaying = false
             }
@@ -715,6 +737,7 @@ class MacVideoPlayerState : VideoPlayerState {
 
     override fun play() {
         macLogger.d { "play() - Starting playback" }
+        playbackRequested.set(true)
         ioScope.launch {
             if (!hasMedia && lastUri != null) {
                 // Reload the media using the saved URI
@@ -736,9 +759,15 @@ class MacVideoPlayerState : VideoPlayerState {
     private suspend fun playInBackground() {
         val ptr = playerPtr
         if (ptr == 0L) return
+        if (!playbackRequested.get()) return
 
         try {
             MacNativeBridge.nPlay(ptr)
+
+            if (!playbackRequested.get()) {
+                MacNativeBridge.nPause(ptr)
+                return
+            }
 
             withContext(Dispatchers.Main) {
                 isPlaying = true
@@ -755,6 +784,7 @@ class MacVideoPlayerState : VideoPlayerState {
 
     override fun pause() {
         macLogger.d { "pause() - Pausing playback" }
+        playbackRequested.set(false)
         ioScope.launch {
             pauseInBackground()
         }
@@ -766,6 +796,7 @@ class MacVideoPlayerState : VideoPlayerState {
         if (ptr == 0L) return
 
         try {
+            playbackRequested.set(false)
             MacNativeBridge.nPause(ptr)
 
             withContext(Dispatchers.Main) {
@@ -784,16 +815,39 @@ class MacVideoPlayerState : VideoPlayerState {
 
     override fun stop() {
         macLogger.d { "stop() - Stopping playback" }
+        playbackRequested.set(false)
         ioScope.launch {
             pauseInBackground()
             if (hasMedia) {
-                seekToAsync(0f)
-            }
-            withContext(Dispatchers.Main) {
-                hasMedia = false
-                isLoading = false
+                seekToStoppedFrame()
+            } else {
                 resetState()
             }
+        }
+    }
+
+    private suspend fun seekToStoppedFrame() {
+        val ptr = playerPtr
+        if (ptr == 0L) return
+
+        withContext(Dispatchers.Main) {
+            isPlaying = false
+            isLoading = true
+            sliderPos = 0f
+            _positionText.value = "00:00"
+        }
+
+        seekInProgress = true
+        targetSeekTime = 0.0
+        MacNativeBridge.nSeekTo(ptr, 0.0)
+        publishPausedFrameAfterSeek()
+        seekInProgress = false
+        targetSeekTime = null
+
+        withContext(Dispatchers.Main) {
+            isLoading = false
+            isPlaying = false
+            sliderPos = 0f
         }
     }
 
@@ -833,9 +887,10 @@ class MacVideoPlayerState : VideoPlayerState {
 
             val ptr = playerPtr
             if (ptr == 0L) return
+            val shouldResumeAfterSeek = playbackRequested.get()
             MacNativeBridge.nSeekTo(ptr, seekTime.toDouble())
 
-            if (isPlaying) {
+            if (shouldResumeAfterSeek) {
                 MacNativeBridge.nPlay(ptr)
                 // Reduce delay to update frame faster for local videos
                 delay(10)
@@ -851,6 +906,13 @@ class MacVideoPlayerState : VideoPlayerState {
                             isLoading = false
                         }
                     }
+                }
+            } else {
+                publishPausedFrameAfterSeek()
+                seekInProgress = false
+                targetSeekTime = null
+                withContext(Dispatchers.Main) {
+                    isLoading = false
                 }
             }
         } catch (e: Exception) {
