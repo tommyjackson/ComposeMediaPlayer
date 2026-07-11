@@ -104,6 +104,7 @@ open class DefaultVideoPlayerState(
     override val isPlaying: Boolean get() = _isPlaying
     private var _hasMedia by mutableStateOf(false)
     private var _isPlaying by mutableStateOf(false)
+    private var playbackRequested = false
 
     // Displayed texts for position and duration
     private var _positionText: String by mutableStateOf("00:00")
@@ -370,6 +371,7 @@ open class DefaultVideoPlayerState(
                         }
                     }
                 } else {
+                    playbackRequested = false
                     player.pause()
                     _isPlaying = false
                     onPlaybackEnded?.invoke()
@@ -512,6 +514,7 @@ open class DefaultVideoPlayerState(
      * Clean up all resources associated with the current player
      */
     private fun cleanupCurrentPlayer() {
+        playbackRequested = false
         stopPositionUpdates()
         removeObservers()
         player?.pause()
@@ -578,6 +581,7 @@ open class DefaultVideoPlayerState(
         player = newPlayer
 
         setupObservers(newPlayer, playerItem)
+        playbackRequested = initializeplayerState == InitialPlayerState.PLAY
 
         if (initializeplayerState == InitialPlayerState.PLAY) {
             play()
@@ -588,6 +592,7 @@ open class DefaultVideoPlayerState(
 
     override fun play() {
         iosLogger.d { "play called" }
+        playbackRequested = true
         val currentPlayer = player ?: run {
             iosLogger.d { "play: player is null" }
             return
@@ -620,6 +625,7 @@ open class DefaultVideoPlayerState(
 
     override fun restart() {
         iosLogger.d { "restart called" }
+        playbackRequested = true
         val currentPlayer = player ?: return
         configureAudioSession()
         val zeroTime = CMTimeMake(0, 1)
@@ -638,12 +644,14 @@ open class DefaultVideoPlayerState(
 
     override fun pause() {
         iosLogger.d { "pause called" }
+        playbackRequested = false
         player?.pause()
         // KVO will update isPlaying
     }
 
     override fun stop() {
         iosLogger.d { "stop called" }
+        playbackRequested = false
         player?.pause()
         player?.seekToTime(CMTimeMakeWithSeconds(0.0, 1))
         _isPlaying = false
@@ -662,8 +670,6 @@ open class DefaultVideoPlayerState(
 
             val targetTime = _duration * (value / 1000.0)
             val seekTime = CMTimeMakeWithSeconds(targetTime, NSEC_PER_SEC.toInt())
-            val wasPlaying = _isPlaying
-
             // Create a zero time value for tolerance to ensure precise seeking
             val zeroTime = CMTimeMake(0, 1)
 
@@ -675,7 +681,7 @@ open class DefaultVideoPlayerState(
                 if (finished) {
                     dispatch_async(dispatch_get_main_queue()) {
                         _isLoading = false
-                        if (wasPlaying) {
+                        if (playbackRequested) {
                             currentPlayer.playImmediatelyAtRate(_playbackSpeed)
                         }
                     }
