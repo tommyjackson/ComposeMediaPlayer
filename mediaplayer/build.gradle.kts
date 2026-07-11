@@ -16,7 +16,7 @@ plugins {
     alias(libs.plugins.kotlinCocoapods)
 }
 
-group = "io.github.kdroidfilter.composemediaplayer"
+group = "com.tjackapps"
 
 val ref = System.getenv("GITHUB_REF") ?: ""
 val projectVersion =
@@ -24,7 +24,7 @@ val projectVersion =
         val tag = ref.removePrefix("refs/tags/")
         if (tag.startsWith("v")) tag.substring(1) else tag
     } else {
-        "dev"
+        "0.10.1-tjackapps.1"
     }
 
 kotlin {
@@ -146,7 +146,7 @@ kotlin {
 
 android {
     namespace = "io.github.kdroidfilter.composemediaplayer"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         minSdk =
@@ -234,7 +234,7 @@ tasks.configureEach {
 
 mavenPublishing {
     coordinates(
-        groupId = "io.github.kdroidfilter",
+        groupId = "com.tjackapps",
         artifactId = "composemediaplayer",
         version = projectVersion,
     )

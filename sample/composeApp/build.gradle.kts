@@ -93,7 +93,7 @@ kotlin {
 
 android {
     namespace = "sample.app"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -137,5 +137,4 @@ nucleus.application {
         )
     }
 }
-
 

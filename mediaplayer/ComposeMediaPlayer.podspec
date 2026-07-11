@@ -1,6 +1,6 @@
 Pod::Spec.new do |spec|
     spec.name                     = 'ComposeMediaPlayer'
-    spec.version                  = '0.0.1-dev'
+    spec.version                  = '0.10.1-tjackapps.1'
     spec.homepage                 = 'https://github.com/kdroidFilter/Compose-Media-Player'
     spec.source                   = { :http=> ''}
     spec.authors                  = ''
