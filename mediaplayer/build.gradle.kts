@@ -161,6 +161,12 @@ val nativeJdk =
     extensions.getByType<JavaToolchainService>().launcherFor {
         languageVersion.set(JavaLanguageVersion.of(17))
     }
+val windowsNativeArchitecture = providers.provider {
+    when (System.getProperty("os.arch").lowercase()) {
+        "aarch64", "arm64" -> "ARM64"
+        else -> "x64"
+    }
+}
 
 val buildNativeMacOs by tasks.registering(Exec::class) {
     description = "Compiles the Swift native library into macOS dylibs (arm64 + x64)"
@@ -187,21 +193,34 @@ val buildNativeMacOs by tasks.registering(Exec::class) {
 }
 
 val buildNativeWindows by tasks.registering(Exec::class) {
-    description = "Compiles the C++ native library into Windows DLLs (x64 + ARM64)"
+    description = "Compiles the C++ native library for the current Windows architecture"
     group = "build"
-    val hasPrebuilt =
+    val resourceArchitecture = windowsNativeArchitecture.map { architecture ->
+        when (architecture) {
+            "ARM64" -> "win32-arm64"
+            else -> "win32-x86-64"
+        }
+    }
+    val hasPrebuilt = resourceArchitecture.get().let { architecture ->
         nativeResourceDir
-            .dir("win32-x86-64")
+            .dir(architecture)
             .file("NativeVideoPlayer.dll")
             .asFile
             .exists()
+    }
     enabled = Os.isFamily(Os.FAMILY_WINDOWS) && !hasPrebuilt
 
     val nativeDir = layout.projectDirectory.dir("src/jvmMain/native/windows")
     inputs.dir(nativeDir)
+    inputs.property("windowsNativeArchitecture", windowsNativeArchitecture)
     outputs.dir(nativeResourceDir)
     workingDir(nativeDir)
-    commandLine("cmd", "/c", nativeDir.file("build.bat").asFile.absolutePath)
+    commandLine(
+        "cmd",
+        "/c",
+        nativeDir.file("build.bat").asFile.absolutePath,
+        windowsNativeArchitecture.get(),
+    )
 }
 
 val buildNativeLinux by tasks.registering(Exec::class) {
